@@ -1,14 +1,20 @@
-# GenAI-Powered Mini-SOAR for Phishing Analysis
+# Cognitive SOAR – From Prediction to Attribution
 
-This project is a prototype Security Orchestration, Automation, and Response (SOAR) application built with Python. It uses a machine learning model to predict if a URL is malicious and leverages Generative AI to prescribe a response plan. The entire application is containerized with Docker and orchestrated with Docker Compose for easy setup and deployment.
+This project extends the Mini‑SOAR example into a more intelligent system that not only predicts whether a URL is malicious but also attributes malicious links to a likely threat actor profile. Two models now power the workflow:
+
+* **Phishing URL Detector** – a supervised classifier built with PyCaret.
+* **Threat Actor Profiler** – an unsupervised clustering model that groups malicious URLs into three profiles (State‑Sponsored, Organized Cybercrime, Hacktivist).
+
+When a URL is analysed, the classifier first determines if it is malicious. If so, the clustering model infers the probable actor category and the UI displays a short description of the actor’s typical motivation and tactics. Generative‑AI services are then used to propose a response plan.
 
 ## Features
 
--   **Predictive Analytics**: Uses PyCaret to automatically train a model on a real-world phishing dataset.
--   **Prescriptive Analytics**: Integrates with Google Gemini, OpenAI, and Grok to generate detailed incident response plans.
--   **Interactive UI**: A user-friendly web interface built with the latest version of Streamlit.
--   **Containerized**: Fully containerized with Docker and managed with Docker Compose for a reproducible environment.
--   **Simplified Workflow**: A `Makefile` provides simple commands for building, running, and managing the application.
+* **Predictive Analytics** – URL classification using PyCaret.
+* **Threat Attribution** – clustering‑based actor profiling (State‑Sponsored, Organized Cybercrime, Hacktivist).
+* **Prescriptive Analytics** – integrates with Gemini, OpenAI and Grok for response plans.
+* **Interactive UI** – Streamlit interface with dedicated “Threat Attribution” tab.
+* **Containerised** – Docker & Docker Compose for reproducible deployment.
+* **Simplified workflow** – `Makefile` targets for building and running the app.
 
 ## Prerequisites
 
@@ -43,6 +49,8 @@ Before you begin, ensure you have the following installed on your system:
         ```
         *You only need to provide a key for the service(s) you intend to use.*
 
+More detailed steps are available in [INSTALL.md](INSTALL.md).
+
 ## Running the Application
 
 With the `Makefile`, running the application is simple.
@@ -70,6 +78,8 @@ With the `Makefile`, running the application is simple.
     ```bash
     make clean
     ```
+
+Manual test cases can be found in [TESTING.md](TESTING.md).
 
 ## Project Structure
 ```

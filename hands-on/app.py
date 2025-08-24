@@ -1,10 +1,15 @@
 # app.py
-import streamlit as st
-import pandas as pd
-from pycaret.classification import load_model, predict_model
-from genai_prescriptions import generate_prescription
+import json
 import os
 import time
+
+import pandas as pd
+import streamlit as st
+from genai_prescriptions import generate_prescription
+from pycaret.classification import load_model as load_clf_model
+from pycaret.classification import predict_model as predict_clf_model
+from pycaret.clustering import load_model as load_cluster_model
+from pycaret.clustering import predict_model as predict_cluster_model
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -17,22 +22,29 @@ st.set_page_config(
 # --- Load Model and Feature Plot ---
 @st.cache_resource
 def load_assets():
-    model_path = 'models/phishing_url_detector'
-    plot_path = 'models/feature_importance.png'
-    model = None
-    plot = None
-    if os.path.exists(model_path + '.pkl'):
-        model = load_model(model_path)
-    if os.path.exists(plot_path):
-        plot = plot_path
-    return model, plot
+    clf_path = "models/phishing_url_detector"
+    cluster_path = "models/threat_actor_profiler"
+    plot_path = "models/feature_importance.png"
+    mapping_path = "models/cluster_mapping.json"
+
+    clf_model = load_clf_model(clf_path) if os.path.exists(clf_path + ".pkl") else None
+    cluster_model = (
+        load_cluster_model(cluster_path) if os.path.exists(cluster_path + ".pkl") else None
+    )
+    plot = plot_path if os.path.exists(plot_path) else None
+    mapping = {}
+    if os.path.exists(mapping_path):
+        with open(mapping_path) as f:
+            mapping = {int(k): v for k, v in json.load(f).items()}
+    return clf_model, cluster_model, mapping, plot
 
 
-model, feature_plot = load_assets()
+model, cluster_model, cluster_mapping, feature_plot = load_assets()
 
-if not model:
+if not model or not cluster_model:
     st.error(
-        "Model not found. Please wait for the initial training to complete, or check the container logs with `make logs` if the error persists.")
+        "Models not found. Please ensure training has completed or check container logs with `make logs`."
+    )
     st.stop()
 
 # --- Sidebar for Inputs ---
@@ -51,6 +63,7 @@ with st.sidebar:
         'short_service': st.checkbox("Is it a shortened URL", value=False),
         'at_symbol': st.checkbox("URL contains '@' symbol", value=False),
         'abnormal_url': st.checkbox("Is it an abnormal URL", value=True),
+        'political_keyword': st.checkbox("Contains political keyword", value=False),
     }
 
     st.divider()
@@ -83,6 +96,7 @@ else:
             0 if form_values['ssl_state'] == 'Suspicious' else 1),
         'Abnormal_URL': 1 if form_values['abnormal_url'] else -1,
         'URL_of_Anchor': 0, 'Links_in_tags': 0, 'SFH': 0,
+        'has_political_keyword': 1 if form_values['political_keyword'] else 0,
     }
     input_data = pd.DataFrame([input_dict])
 
@@ -99,11 +113,13 @@ else:
     risk_df = pd.DataFrame(list(risk_scores.items()), columns=['Feature', 'Risk Contribution']).sort_values(
         'Risk Contribution', ascending=False)
 
+    actor_profile = None
+
     # --- Analysis Workflow ---
     with st.status("Executing SOAR playbook...", expanded=True) as status:
         st.write("▶️ **Step 1: Predictive Analysis** - Running features through classification model.")
         time.sleep(1)
-        prediction = predict_model(model, data=input_data)
+        prediction = predict_clf_model(model, data=input_data)
         is_malicious = prediction['prediction_label'].iloc[0] == 1
 
         verdict = "MALICIOUS" if is_malicious else "BENIGN"
@@ -111,10 +127,25 @@ else:
         time.sleep(1)
 
         if is_malicious:
-            st.write(f"▶️ **Step 3: Prescriptive Analytics** - Engaging **{genai_provider}** for action plan.")
+            st.write("▶️ **Step 3: Threat Attribution** - Profiling likely threat actor.")
+            cluster_prediction = predict_cluster_model(cluster_model, data=input_data)
+            cluster_label = int(cluster_prediction["Cluster"].iloc[0])
+            actor_profile = cluster_mapping.get(cluster_label, f"Cluster {cluster_label}")
+            st.write(f"Likely actor profile: **{actor_profile}**")
+            time.sleep(1)
+
+            st.write(
+                f"▶️ **Step 4: Prescriptive Analytics** - Engaging **{genai_provider}** for action plan."
+            )
             try:
-                prescription = generate_prescription(genai_provider, {k: v for k, v in input_dict.items()})
-                status.update(label="✅ SOAR Playbook Executed Successfully!", state="complete", expanded=False)
+                prescription = generate_prescription(
+                    genai_provider, {k: v for k, v in input_dict.items()}
+                )
+                status.update(
+                    label="✅ SOAR Playbook Executed Successfully!",
+                    state="complete",
+                    expanded=False,
+                )
             except Exception as e:
                 st.error(f"Failed to generate prescription: {e}")
                 prescription = None
@@ -124,7 +155,12 @@ else:
             status.update(label="✅ Analysis Complete. No threat found.", state="complete", expanded=False)
 
     # --- Tabs for Organized Output ---
-    tab1, tab2, tab3 = st.tabs(["📊 **Analysis Summary**", "📈 **Visual Insights**", "📜 **Prescriptive Plan**"])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 **Analysis Summary**",
+        "📈 **Visual Insights**",
+        "📜 **Prescriptive Plan**",
+        "🎭 **Threat Attribution**",
+    ])
 
     with tab1:
         st.subheader("Verdict and Key Findings")
@@ -162,4 +198,19 @@ else:
             st.text_area("Draft", prescription.get("communication_draft", ""), height=150)
         else:
             st.info("No prescriptive plan was generated because the URL was classified as benign.")
+
+    with tab4:
+        st.subheader("Threat Attribution")
+        descriptions = {
+            "State-Sponsored": "Highly resourced groups focusing on stealth and long-term goals.",
+            "Organized Cybercrime": "Profit-driven actors launching large-scale, noisy campaigns.",
+            "Hacktivist": "Ideologically motivated attackers leveraging opportunistic tactics.",
+        }
+        if is_malicious and actor_profile:
+            st.write(f"**Likely Threat Actor:** {actor_profile}")
+            st.caption(descriptions.get(actor_profile, ""))
+        elif not is_malicious:
+            st.info("Attribution available only for malicious URLs.")
+        else:
+            st.warning("Attribution model did not return a profile.")
 
